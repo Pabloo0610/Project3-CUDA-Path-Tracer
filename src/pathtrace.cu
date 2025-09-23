@@ -6,6 +6,9 @@
 #include <thrust/execution_policy.h>
 #include <thrust/random.h>
 #include <thrust/remove.h>
+#include <thrust/device_vector.h>
+#include <thrust/partition.h>
+#include <thrust/sort.h>
 
 #include "sceneStructs.h"
 #include "scene.h"
@@ -16,6 +19,8 @@
 #include "interactions.h"
 
 #define ERRORCHECK 1
+#define SORT_MATERIAL 0
+#define STREAM_COMPACT 0
 
 #define FILENAME (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 #define checkCUDAError(msg) checkCUDAErrorFn(msg, FILENAME, __LINE__)
@@ -48,6 +53,24 @@ thrust::default_random_engine makeSeededRandomEngine(int iter, int index, int de
     int h = utilhash((1 << 31) | (depth << 22) | iter) ^ utilhash(index);
     return thrust::default_random_engine(h);
 }
+
+struct sortMaterialId
+{
+  __host__ __device__
+  bool operator()(const ShadeableIntersection& a, const ShadeableIntersection& b)
+  {
+    return a.materialId < b.materialId;
+  }
+};
+
+struct isPathActive
+{
+  __host__ __device__
+    bool operator()(const PathSegment& p) const
+  {
+    return p.remainingBounces > 0;
+  }
+};
 
 //Kernel that writes the image to the OpenGL PBO directly.
 __global__ void sendImageToPBO(uchar4* pbo, glm::ivec2 resolution, int iter, glm::vec3* image)
@@ -215,6 +238,7 @@ __global__ void computeIntersections(
         if (hit_geom_index == -1)
         {
             intersections[path_index].t = -1.0f;
+            intersections[path_index].materialId = -1;
         }
         else
         {
@@ -279,6 +303,54 @@ __global__ void shadeFakeMaterial(
         }
     }
 }
+
+// Naive shade function
+__global__ void shadeBaseMaterial(
+  int iter,
+  int depth,
+  int num_paths,
+  ShadeableIntersection* shadeableIntersections,
+  PathSegment* pathSegments,
+  Material* materials)
+{
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < num_paths)
+  {
+    if (pathSegments[idx].remainingBounces <= 0) return;
+    ShadeableIntersection intersection = shadeableIntersections[idx];
+    if (intersection.t > 0.0f) // if the intersection exists...
+    {
+      // Set up the RNG
+      // LOOK: this is how you use thrust's RNG! Please look at
+      // makeSeededRandomEngine as well.
+      thrust::default_random_engine rng = makeSeededRandomEngine(iter, idx, depth);
+      thrust::uniform_real_distribution<float> u01(0, 1);
+
+      Material material = materials[intersection.materialId];
+      glm::vec3 materialColor = material.color;
+
+      // If the material indicates that the object was a light, "light" the ray
+      if (material.emittance > 0.0f) {
+        pathSegments[idx].color *= (materialColor * material.emittance);
+        pathSegments[idx].remainingBounces = 0;
+      }
+      else {
+        glm::vec3 intersect = getPointOnRay(pathSegments[idx].ray, intersection.t);
+        scatterRay(pathSegments[idx], intersect, intersection.surfaceNormal, material, rng);
+        // pathSegments[idx].color *= u01(rng);
+      }
+      // If there was no intersection, color the ray black.
+      // Lots of renderers use 4 channel color, RGBA, where A = alpha, often
+      // used for opacity, in which case they can indicate "no opacity".
+      // This can be useful for post-processing and image compositing.
+    }
+    else {
+      pathSegments[idx].color = glm::vec3(0.0f);
+      pathSegments[idx].remainingBounces = 0;
+    }
+  }
+}
+
 
 // Add the current iteration's output to the overall image
 __global__ void finalGather(int nPaths, glm::vec3* image, PathSegment* iterationPaths)
@@ -381,14 +453,33 @@ void pathtrace(uchar4* pbo, int frame, int iter)
         // TODO: compare between directly shading the path segments and shading
         // path segments that have been reshuffled to be contiguous in memory.
 
-        shadeFakeMaterial<<<numblocksPathSegmentTracing, blockSize1d>>>(
+        if (SORT_MATERIAL) {
+				//reshuffle path segments according to material id.
+        thrust::device_ptr<ShadeableIntersection> intersections_ptr = thrust::device_pointer_cast(dev_intersections);
+        thrust::device_ptr<PathSegment> paths_ptr = thrust::device_pointer_cast(dev_paths);
+
+        thrust::sort_by_key(intersections_ptr, intersections_ptr + num_paths, paths_ptr, sortMaterialId());
+        }
+
+        shadeBaseMaterial<<<numblocksPathSegmentTracing, blockSize1d>>>(
             iter,
+            depth,
             num_paths,
             dev_intersections,
             dev_paths,
             dev_materials
         );
-        iterationComplete = true; // TODO: should be based off stream compaction results.
+        //if (depth >= traceDepth) iterationComplete = true;
+        //iterationComplete = true; // TODO: should be based off stream compaction results.
+        if (STREAM_COMPACT) {
+          thrust::device_ptr<PathSegment> paths_ptr = thrust::device_pointer_cast(dev_paths);
+          thrust::device_ptr<PathSegment> new_end = thrust::partition(paths_ptr, paths_ptr + num_paths, isPathActive());
+          num_paths = new_end - paths_ptr;
+          if (num_paths == 0 || depth >= traceDepth) iterationComplete = true;
+        }
+        else {
+					if (depth >= traceDepth) iterationComplete = true;
+        }
 
         if (guiData != NULL)
         {
@@ -398,7 +489,7 @@ void pathtrace(uchar4* pbo, int frame, int iter)
 
     // Assemble this iteration and apply it to the image
     dim3 numBlocksPixels = (pixelcount + blockSize1d - 1) / blockSize1d;
-    finalGather<<<numBlocksPixels, blockSize1d>>>(num_paths, dev_image, dev_paths);
+    finalGather<<<numBlocksPixels, blockSize1d>>>(pixelcount, dev_image, dev_paths);
 
     ///////////////////////////////////////////////////////////////////////////
 
