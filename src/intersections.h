@@ -38,6 +38,8 @@ __host__ __device__ inline glm::vec3 multiplyMV(glm::mat4 m, glm::vec4 v)
     return glm::vec3(m * v);
 }
 
+__host__ __device__ inline float len2(const glm::vec3& v) { return glm::dot(v, v); }
+
 // CHECKITOUT
 /**
  * Test intersection between a ray and a transformed cube. Untransformed,
@@ -67,6 +69,45 @@ __host__ __device__ float boxIntersectionTest(
  */
 __host__ __device__ float sphereIntersectionTest(
     Geom sphere,
+    Ray r,
+    glm::vec3& intersectionPoint,
+    glm::vec3& normal,
+    bool& outside);
+
+/**
+ * Test intersection between a ray and a single triangle.
+ *
+ * @param v0, v1, v2          three vertices of the triangle
+ * @param n0, n1, n2          vertex normal (world space)
+ * @param intersectionPoint   Output parameter for point of intersection.
+ * @param normal              Output parameter for surface normal.
+ * @param barycentric         barycentric coordinates for texture interpolation
+ * @return                    Ray parameter `t` value. -1 if no intersection.
+ */
+__host__ __device__ float triangleIntersectionTest(
+    const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2,
+    const glm::vec3& n0, const glm::vec3& n1, const glm::vec3& n2,
+    const Ray& r,
+    glm::vec3& intersectionPoint,
+    glm::vec3& normal,
+    glm::vec3& barycentric);
+
+__host__ __device__ float meshIntersectionTestV0(
+    Geom geom,
+    GltfMesh mesh,
+	GltfPrimitive* primitives,
+    Vertex* vertices,
+    uint32_t* indices,
+    Ray r,
+    glm::vec3& intersectionPoint,
+    glm::vec3& normal,
+    bool& outside);
+
+__host__ __device__ float meshIntersectionTestV1(
+    Geom geom,
+    GltfMesh mesh,
+    GltfPrimitive* primitives,
+    GltfTriangle* triangles,
     Ray r,
     glm::vec3& intersectionPoint,
     glm::vec3& normal,

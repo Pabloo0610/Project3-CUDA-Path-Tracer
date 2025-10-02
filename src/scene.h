@@ -2,15 +2,27 @@
 
 #include "sceneStructs.h"
 #include <vector>
+#include "tiny_gltf.h"
 
-class Scene
+class Scenez
 {
 private:
     void loadFromJSON(const std::string& jsonName);
-public:
-    Scene(std::string filename);
+	void loadFromGLTF(const std::string& gltfName);
+    void getNodeProps(const tinygltf::Node& node, const tinygltf::Model& model, size_t& vertexCount, size_t& indexCount);
+    void loadTextures(const tinygltf::Model& model);
+	void loadNode(GltfNode* parent, const tinygltf::Node& node, uint32_t nodeIndex, const tinygltf::Model& model, LoaderInfo& loaderInfo, glm::mat4 p_transform);
+	void buildTriangleBuffer();
 
+public:
+    Scenez(std::string filename);
+
+	std::vector<GltfMesh> meshes;
+	std::vector<GltfPrimitive> primitives;
+	std::vector<GltfTriangle> triangles;
     std::vector<Geom> geoms;
-    std::vector<Material> materials;
+    std::vector<Materialz> materials;
+	std::vector<Vertex> vertices;
+	std::vector<uint32_t> indices;
     RenderState state;
 };

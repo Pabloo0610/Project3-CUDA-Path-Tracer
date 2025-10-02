@@ -48,7 +48,7 @@ __host__ __device__ void scatterRay(
     PathSegment & pathSegment,
     glm::vec3 intersect,
     glm::vec3 normal,
-    const Material &m,
+    const Materialz &m,
     thrust::default_random_engine &rng)
 {
     // TODO: implement this.
@@ -64,6 +64,11 @@ __host__ __device__ void scatterRay(
     pathSegment.remainingBounces--;
   }
   else if (m.type == MATERIAL_SPECULAR) {
-
+    glm::vec3 incident = glm::normalize(pathSegment.ray.direction);
+    glm::vec3 reflectDir = glm::reflect(incident, glm::normalize(normal));
+    pathSegment.ray.origin = intersect + 0.001f * reflectDir;
+    pathSegment.ray.direction = reflectDir;
+    pathSegment.color *= m.color;
+    pathSegment.remainingBounces--;
   }
 }

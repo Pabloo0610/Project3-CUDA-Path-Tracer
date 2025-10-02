@@ -111,3 +111,179 @@ __host__ __device__ float sphereIntersectionTest(
 
     return glm::length(r.origin - intersectionPoint);
 }
+
+__host__ __device__ float triangleIntersectionTest(
+    const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2,
+    const glm::vec3& n0, const glm::vec3& n1, const glm::vec3& n2,
+    const Ray& r,
+    glm::vec3& intersectionPoint,
+    glm::vec3& normal,
+    glm::vec3& barycentric)
+{
+    const float EPSILON = 1e-6f;
+
+    glm::vec3 e1 = v1 - v0;
+    glm::vec3 e2 = v2 - v0;
+
+    glm::vec3 pvec = glm::cross(r.direction, e2);
+    float det = glm::dot(e1, pvec);
+
+    if (fabs(det) < EPSILON) {
+        return -1.0f;
+    }
+
+    float invDet = 1.0f / det;
+    glm::vec3 tvec = r.origin - v0;
+
+    float u = glm::dot(tvec, pvec) * invDet;
+    if (u < 0.0f || u > 1.0f) return -1.0f;
+
+    glm::vec3 qvec = glm::cross(tvec, e1);
+    float v = glm::dot(r.direction, qvec) * invDet;
+    if (v < 0.0f || u + v > 1.0f) return -1.0f;
+
+    float t = glm::dot(e2, qvec) * invDet;
+    if (t < EPSILON) return -1.0f;
+
+    intersectionPoint = r.origin + t * r.direction;
+
+    barycentric = glm::vec3(1 - u - v, u, v);
+
+    normal = glm::normalize(
+        barycentric.x * n0 +
+        barycentric.y * n1 +
+        barycentric.z * n2
+    );
+
+    return t;
+}
+
+__host__ __device__ float meshIntersectionTestV0(
+    Geom geom,
+    GltfMesh mesh,
+	GltfPrimitive* primitives,
+    Vertex* vertices,
+	uint32_t* indices,
+    Ray r,
+    glm::vec3& intersectionPoint,
+    glm::vec3& normal,
+    bool& outside)
+{
+    Ray q;
+    q.origin = multiplyMV(geom.inverseTransform, glm::vec4(r.origin, 1.0f));
+    q.direction = glm::normalize(multiplyMV(geom.inverseTransform, glm::vec4(r.direction, 0.0f)));
+
+    float t_best = 1e30f;
+    glm::vec3 bestP, bestN;
+    bool found = false;
+
+    for (int p = 0; p < mesh.primCount; ++p) {
+        const GltfPrimitive& prim = primitives[p + mesh.primIndexStart];
+        if (!prim.hasIndices || prim.indexCount < 3) continue;
+
+        uint32_t start = prim.firstIndex;
+        uint32_t end = start + prim.indexCount;
+
+        for (uint32_t k = start; k + 2 < end; k += 3) {
+            uint32_t i0 = indices[k + 0];
+            uint32_t i1 = indices[k + 1];
+            uint32_t i2 = indices[k + 2];
+
+            const glm::vec3& v0 = vertices[i0].pos;
+            const glm::vec3& v1 = vertices[i1].pos;
+            const glm::vec3& v2 = vertices[i2].pos;
+
+            glm::vec3 n0 = vertices[i0].normal;
+            glm::vec3 n1 = vertices[i1].normal;
+            glm::vec3 n2 = vertices[i2].normal;
+
+            if (len2(n0) == 0.f && len2(n1) == 0.f && len2(n2) == 0.f) {
+                glm::vec3 faceN = glm::normalize(glm::cross(v1 - v0, v2 - v0));
+                n0 = n1 = n2 = faceN;
+            }
+
+            glm::vec3 isectP, N, bary;
+            float t = triangleIntersectionTest(v0, v1, v2, n0, n1, n2, q, isectP, N, bary);
+
+            if (t > 0.0f && t < t_best) {
+                t_best = t;
+                bestP = isectP;
+                bestN = N;
+                found = true;
+            }
+        }
+    }
+
+    if (!found) {
+        return -1.0f;
+    }
+
+    intersectionPoint = multiplyMV(geom.transform, glm::vec4(bestP, 1.f));
+    normal = glm::normalize(multiplyMV(geom.invTranspose, glm::vec4(bestN, 0.f)));
+
+    outside = true;
+    if (glm::dot(normal, r.direction) > 0.0f) {
+        normal = -normal;
+        outside = false;
+    }
+
+    return glm::length(intersectionPoint - r.origin);
+}
+
+__host__ __device__ float meshIntersectionTestV1(
+    Geom geom,
+    GltfMesh mesh,
+    GltfPrimitive* primitives,
+    GltfTriangle* triangles,
+    Ray r,
+    glm::vec3& intersectionPoint,
+    glm::vec3& normal,
+    bool& outside)
+{
+
+    Ray q;
+    q.origin = multiplyMV(geom.inverseTransform, glm::vec4(r.origin, 1.0f));
+    q.direction = glm::normalize(multiplyMV(geom.inverseTransform, glm::vec4(r.direction, 0.0f)));
+
+    float t_best = 1e30f;
+    glm::vec3 bestP, bestN;
+    bool found = false;
+
+    for (int p = 0; p < mesh.primCount; ++p) {
+        const GltfPrimitive& prim = primitives[p + mesh.primIndexStart];
+        if (prim.triangleCount == 0) continue;
+
+        for (uint32_t k = 0; k < prim.triangleCount; ++k) {
+            const GltfTriangle& tri = triangles[prim.firstTriangle + k];
+
+            glm::vec3 isectP, N, bary;
+            float t = triangleIntersectionTest(
+                tri.v0, tri.v1, tri.v2,
+                tri.n0, tri.n1, tri.n2,
+                q, isectP, N, bary
+            );
+
+            if (t > 0.0f && t < t_best) {
+                t_best = t;
+                bestP = isectP;
+                bestN = N;
+                found = true;
+            }
+        }
+    }
+
+    if (!found) {
+        return -1.0f;
+    }
+
+    intersectionPoint = multiplyMV(geom.transform, glm::vec4(bestP, 1.f));
+    normal = glm::normalize(multiplyMV(geom.invTranspose, glm::vec4(bestN, 0.f)));
+
+    outside = true;
+    if (glm::dot(normal, r.direction) > 0.0f) {
+        normal = -normal;
+        outside = false;
+    }
+
+    return glm::length(intersectionPoint - r.origin);
+}

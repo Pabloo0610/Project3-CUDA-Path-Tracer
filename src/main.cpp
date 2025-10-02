@@ -41,7 +41,7 @@ float zoom, theta, phi;
 glm::vec3 cameraPosition;
 glm::vec3 ogLookAt; // for recentering the camera
 
-Scene* scene;
+Scenez* scene;
 GuiDataContainer* guiData;
 RenderState* renderState;
 int iteration;
@@ -351,7 +351,7 @@ int main(int argc, char** argv)
     const char* sceneFile = argv[1];
 
     // Load scene file
-    scene = new Scene(sceneFile);
+    scene = new Scenez(sceneFile);
 
     //Create Instance for ImGUIData
     guiData = new GuiDataContainer();
@@ -359,7 +359,7 @@ int main(int argc, char** argv)
     // Set up camera stuff from loaded path tracer settings
     iteration = 0;
     renderState = &scene->state;
-    Camera& cam = renderState->camera;
+    Cameraz& cam = renderState->camera;
     width = cam.resolution.x;
     height = cam.resolution.y;
 
@@ -423,7 +423,7 @@ void runCuda()
     if (camchanged)
     {
         iteration = 0;
-        Camera& cam = renderState->camera;
+        Cameraz& cam = renderState->camera;
         cameraPosition.x = zoom * sin(phi) * sin(theta);
         cameraPosition.y = zoom * cos(theta);
         cameraPosition.z = zoom * cos(phi) * sin(theta);
@@ -492,7 +492,7 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
             case GLFW_KEY_SPACE:
                 camchanged = true;
                 renderState = &scene->state;
-                Camera& cam = renderState->camera;
+                Cameraz& cam = renderState->camera;
                 cam.lookAt = ogLookAt;
                 break;
         }
@@ -535,7 +535,7 @@ void mousePositionCallback(GLFWwindow* window, double xpos, double ypos)
     else if (middleMousePressed)
     {
         renderState = &scene->state;
-        Camera& cam = renderState->camera;
+        Cameraz& cam = renderState->camera;
         glm::vec3 forward = cam.view;
         forward.y = 0.0f;
         forward = glm::normalize(forward);
