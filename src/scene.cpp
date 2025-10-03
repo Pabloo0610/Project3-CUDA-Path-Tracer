@@ -82,6 +82,10 @@ void Scenez::loadFromGLTF(const std::string& gltfName)
         << model.scenes.size() << " scenes\n"
         << model.lights.size() << " lights\n";
 
+	int texOffset = textures.size();
+    loadGltfTextures(model);
+	int matOffset = materials.size();
+    loadGltfMaterial(model, texOffset);
 	size_t vertexCount = 0;
 	size_t indexCount = 0;
 	const tinygltf::Scene& scene = model.scenes[model.defaultScene > -1 ? model.defaultScene : 0];
@@ -96,7 +100,7 @@ void Scenez::loadFromGLTF(const std::string& gltfName)
     loaderInfo.indexBuffer = new uint32_t[indexCount];
     for (size_t i = 0; i < scene.nodes.size(); i++) {
         const tinygltf::Node node = model.nodes[scene.nodes[i]];
-        loadNode(nullptr, node, scene.nodes[i], model, loaderInfo, glm::mat4(1.0f));
+        loadNode(nullptr, node, scene.nodes[i], model, loaderInfo, glm::mat4(1.0f), matOffset);
     }
 
 	vertices.assign(loaderInfo.vertexBuffer, loaderInfo.vertexBuffer + vertexCount);
@@ -110,11 +114,45 @@ void Scenez::loadFromGLTF(const std::string& gltfName)
 	}
 	cout << "loaded total " << primitives.size() << " primitives\n";
     for (size_t i = 0; i < primitives.size(); i++) {
-        cout << "primitive " << i << " first index: " << primitives[i].firstIndex << " index count: " << primitives[i].indexCount << " vertex count: " << primitives[i].vertexCount << "\n";
+        cout << "primitive " << i << " first index: " << primitives[i].firstIndex << " index count: " << primitives[i].indexCount 
+            << " vertex count: " << primitives[i].vertexCount << " material id " << primitives[i].materialId << "\n"
+            << " bbmin " << primitives[i].bb.min.x << " " << primitives[i].bb.min.y << " " << primitives[i].bb.min.z << "\n"
+            << " bbmax " << primitives[i].bb.max.x << " " << primitives[i].bb.max.y << " " << primitives[i].bb.max.z << "\n";
     }
 	cout << "loaded total " << triangles.size() << " triangles\n";
+	cout << triangles[0].v0.x << " " << triangles[0].v0.y << " " << triangles[0].v0.z << "\n";
+    cout << "loaded total " << textures.size() << " textures\n";
+    cout << "loaded total " << materials.size() << " materials\n";
     delete[] loaderInfo.vertexBuffer;
     delete[] loaderInfo.indexBuffer;
+}
+void Scenez::loadGltfMaterial(const tinygltf::Model& model, const int& texOffset) {
+    for (const tinygltf::Material& mat : model.materials) {
+        Materialz newMat;
+
+        newMat.type = 0;
+		newMat.isGltf = true;
+		newMat.texOffset = texOffset;
+
+		newMat.baseColorFactor = glm::make_vec3(mat.pbrMetallicRoughness.baseColorFactor.data());
+		newMat.baseColorTexId = mat.pbrMetallicRoughness.baseColorTexture.index;
+		newMat.texCoordSets.baseColor = mat.pbrMetallicRoughness.baseColorTexture.texCoord;
+        materials.push_back(newMat);
+	}
+}
+void Scenez::loadGltfTextures(const tinygltf::Model& model) {
+
+    for (const tinygltf::Texture& gltfTexture : model.textures) {
+        GltfTexture newTexture;
+        const tinygltf::Image& image = model.images[gltfTexture.source];
+        newTexture.components = image.component;
+        newTexture.width = image.width;
+        newTexture.height = image.height;
+        newTexture.size = image.component * image.width * image.height * sizeof(unsigned char);
+        newTexture.imageData = new unsigned char[newTexture.size];
+        memcpy(newTexture.imageData, image.image.data(), newTexture.size);
+        textures.push_back(newTexture);
+    }
 }
 
 void Scenez::getNodeProps(const tinygltf::Node& node, const tinygltf::Model& model, size_t& vertexCount, size_t& indexCount) {
@@ -136,7 +174,7 @@ void Scenez::getNodeProps(const tinygltf::Node& node, const tinygltf::Model& mod
 }
 
 // modified from https://github.com/SaschaWillems/Vulkan-glTF-PBR
-void Scenez::loadNode(GltfNode* parent, const tinygltf::Node& node, uint32_t nodeIndex, const tinygltf::Model& model, LoaderInfo& loaderInfo, glm::mat4 pTransform) {
+void Scenez::loadNode(GltfNode* parent, const tinygltf::Node& node, uint32_t nodeIndex, const tinygltf::Model& model, LoaderInfo& loaderInfo, glm::mat4 pTransform, int matOffset) {
 
     GltfNode* newNode = new GltfNode{};
     newNode->index = nodeIndex;
@@ -171,7 +209,7 @@ void Scenez::loadNode(GltfNode* parent, const tinygltf::Node& node, uint32_t nod
 
     if (node.children.size() > 0) {
         for (size_t i = 0; i < node.children.size(); i++) {
-            loadNode(newNode, model.nodes[node.children[i]], node.children[i], model, loaderInfo, globalTransform);
+            loadNode(newNode, model.nodes[node.children[i]], node.children[i], model, loaderInfo, globalTransform, matOffset);
         }
     }
     if (node.mesh > -1) {
@@ -181,7 +219,7 @@ void Scenez::loadNode(GltfNode* parent, const tinygltf::Node& node, uint32_t nod
 		newGeom.transform = globalTransform;
         newGeom.inverseTransform = glm::inverse(newGeom.transform);
         newGeom.invTranspose = glm::inverseTranspose(newGeom.transform);
-        newGeom.materialid = 3; // default white diffuse
+        newGeom.materialid = 3; // we are not using this
 
 		newGeom.meshid = meshes.size() + node.mesh;
         geoms.push_back(newGeom);
@@ -200,6 +238,9 @@ void Scenez::loadNode(GltfNode* parent, const tinygltf::Node& node, uint32_t nod
             uint32_t indexCount = 0;
             uint32_t vertexCount = 0;
 
+            glm::vec3 posMin{};
+            glm::vec3 posMax{};
+
             bool hasIndices = primitive.indices > -1;
 
             const float* bufferPos = nullptr;
@@ -215,6 +256,8 @@ void Scenez::loadNode(GltfNode* parent, const tinygltf::Node& node, uint32_t nod
             const tinygltf::Accessor& posAccessor = model.accessors[primitive.attributes.find("POSITION")->second];
             const tinygltf::BufferView& posView = model.bufferViews[posAccessor.bufferView];
             bufferPos = reinterpret_cast<const float*>(&(model.buffers[posView.buffer].data[posAccessor.byteOffset + posView.byteOffset]));
+            posMin = glm::vec3(posAccessor.minValues[0], posAccessor.minValues[1], posAccessor.minValues[2]);
+            posMax = glm::vec3(posAccessor.maxValues[0], posAccessor.maxValues[1], posAccessor.maxValues[2]);
             vertexCount = static_cast<uint32_t>(posAccessor.count);
             posByteStride = posAccessor.ByteStride(posView) ? (posAccessor.ByteStride(posView) / sizeof(float)) : tinygltf::GetNumComponentsInType(TINYGLTF_TYPE_VEC3);
 
@@ -287,7 +330,10 @@ void Scenez::loadNode(GltfNode* parent, const tinygltf::Node& node, uint32_t nod
             newPrimitive.firstIndex = indexStart;
             newPrimitive.indexCount = indexCount;
             newPrimitive.vertexCount = vertexCount;
-            newPrimitive.materialId = primitive.material;
+            newPrimitive.materialId = matOffset + primitive.material;
+			//newPrimitive.bb.min = posMin;
+            //newPrimitive.bb.max = posMax;
+			//newPrimitive.bb.valid = true;
 
 			primitives.emplace_back(newPrimitive);
         }
@@ -407,6 +453,9 @@ void Scenez::buildTriangleBuffer() {
     triangles.clear();
 
     for (auto& prim : primitives) {
+        glm::vec3 minBB(FLT_MAX);
+        glm::vec3 maxBB(-FLT_MAX);
+
         if (!prim.hasIndices || prim.indexCount < 3) continue;
 
         prim.firstTriangle = static_cast<uint32_t>(triangles.size());
@@ -438,6 +487,13 @@ void Scenez::buildTriangleBuffer() {
             tri.uv2 = v2.uv0;
 
             triangles.push_back(tri);
+
+            minBB = glm::min(minBB, glm::min(tri.v0, glm::min(tri.v1, tri.v2)));
+            maxBB = glm::max(maxBB, glm::max(tri.v0, glm::max(tri.v1, tri.v2)));
         }
+
+		prim.bb.min = minBB;
+        prim.bb.max = maxBB;
+		prim.bb.valid = true;
     }
 }

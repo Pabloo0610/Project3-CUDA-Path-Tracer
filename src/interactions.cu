@@ -44,10 +44,12 @@ __host__ __device__ glm::vec3 calculateRandomDirectionInHemisphere(
         + sin(around) * over * perpendicularDirection2;
 }
 
-__host__ __device__ void scatterRay(
+__device__ void scatterRay(
     PathSegment & pathSegment,
     glm::vec3 intersect,
+	glm::vec2 uv,
     glm::vec3 normal,
+    cudaTextureObject_t* texObjs,
     const Materialz &m,
     thrust::default_random_engine &rng)
 {
@@ -56,19 +58,32 @@ __host__ __device__ void scatterRay(
     // calculateRandomDirectionInHemisphere defined above.
 
   // pure diffuse
-  if (m.type == MATERIAL_DIFFUSE) {
+	int texId = m.texOffset + m.baseColorTexId;
+    glm::vec3 texColor;
+    if (texId >= 0) {
+        float4 texSample = tex2D<float4>(texObjs[texId], uv.x, uv.y);
+        texColor = glm::vec3(texSample.x, texSample.y, texSample.z);
+	}
+    glm::vec3 mColor;
+    if (m.isGltf) {
+        mColor = texColor;
+    }
+    else {
+        mColor = m.color;
+	}
+    if (m.type == MATERIAL_DIFFUSE) {
     glm::vec3 randDir = calculateRandomDirectionInHemisphere(normal, rng);
     pathSegment.ray.origin = intersect + 0.001f * randDir;
     pathSegment.ray.direction = randDir;
-    pathSegment.color *= m.color;
+    pathSegment.color *= mColor;
     pathSegment.remainingBounces--;
-  }
-  else if (m.type == MATERIAL_SPECULAR) {
+    }
+    else if (m.type == MATERIAL_SPECULAR) {
     glm::vec3 incident = glm::normalize(pathSegment.ray.direction);
     glm::vec3 reflectDir = glm::reflect(incident, glm::normalize(normal));
     pathSegment.ray.origin = intersect + 0.001f * reflectDir;
     pathSegment.ray.direction = reflectDir;
     pathSegment.color *= m.color;
     pathSegment.remainingBounces--;
-  }
+    }
 }

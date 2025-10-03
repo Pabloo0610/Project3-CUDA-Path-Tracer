@@ -7,3 +7,4 @@ void InitDataContainer(GuiDataContainer* guiData);
 void pathtraceInit(Scenez *scene);
 void pathtraceFree();
 void pathtrace(uchar4 *pbo, int frame, int iteration);
+void uploadCudaTexture(GltfTexture& tex);

@@ -111,4 +111,23 @@ __host__ __device__ float meshIntersectionTestV1(
     Ray r,
     glm::vec3& intersectionPoint,
     glm::vec3& normal,
-    bool& outside);
+    bool& outside,
+    glm::vec2& uv,
+    int& matId);
+
+__host__ __device__ float meshIntersectionTestV2(
+    Geom geom,
+    GltfMesh mesh,
+    GltfPrimitive* primitives,
+    GltfTriangle* triangles,
+    Ray r,
+    glm::vec3& intersectionPoint,
+    glm::vec3& normal,
+    bool& outside,
+    glm::vec2& uv);
+
+__host__ __device__ bool intersectAABB(
+    const Ray& ray,
+    const glm::vec3& min,
+    const glm::vec3& max,
+    float& tNear, float& tFar);

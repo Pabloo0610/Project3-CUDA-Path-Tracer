@@ -10,20 +10,98 @@
 
 #define BACKGROUND_COLOR (glm::vec3(0.0f))
 
+struct BoundingBox {
+    glm::vec3 min;
+    glm::vec3 max;
+    bool valid = false;
+    //BoundingBox();
+    //BoundingBox(glm::vec3 min, glm::vec3 max);
+    //BoundingBox getAABB(glm::mat4 m);
+};
+
 // glTF struct
 struct GltfTexture {
-    int width, height;
+    int width, height, size;
+	int components; // e.g. 3 for RGB, 4 for RGBA
 	unsigned char* imageData = nullptr;
 };
 
-struct GltfMaterial {
-    glm::vec4 baseColorFactor = glm::vec4(1.0f);
-    glm::vec4 emissiveFactor = glm::vec4(0.0f);
-    int baseColorTexId = -1;
-    int normalTexId = -1;
-    int metallicRoughnessTexId = -1;
-    int emissiveTexId = -1;
+struct GltfTextureInfo {
+    int index{ -1 };    // required.
+    int texCoord{ 0 };  // The set index of texture's TEXCOORD attribute used for
+    // texture coordinate mapping.
+
+    //Value extras;
+    //ExtensionMap extensions;
+
+    // Filled when SetStoreOriginalJSONForExtrasAndExtensions is enabled.
+    //std::string extras_json_string;
+    //std::string extensions_json_string;
+
+    GltfTextureInfo() = default;
+    //DEFAULT_METHODS(TextureInfo)
+    //    bool operator==(const TextureInfo&) const;
 };
+
+//from tinygltf
+struct GltfPbrMetallicRoughness {
+	glm::vec3 baseColorFactor = glm::vec3(1.0f);  // here we use RGB, ignore A
+    GltfTextureInfo baseColorTexture;
+    float metallicFactor{ 1.0 };   // default 1
+    float roughnessFactor{ 1.0 };  // default 1
+    GltfTextureInfo metallicRoughnessTexture;
+
+    //Value extras;
+    //ExtensionMap extensions;
+
+    // Filled when SetStoreOriginalJSONForExtrasAndExtensions is enabled.
+    std::string extras_json_string;
+    std::string extensions_json_string;
+
+    GltfPbrMetallicRoughness() = default;
+    //DEFAULT_METHODS(PbrMetallicRoughness)
+
+    //    bool operator==(const PbrMetallicRoughness&) const;
+};
+
+// combine gltf and json material struct
+struct Materialz
+{
+    int type;
+    glm::vec3 color;
+    struct
+    {
+        float exponent;
+        glm::vec3 color;
+    } specular;
+    float hasReflective;
+    float hasRefractive;
+    float indexOfRefraction;
+    float emittance;
+
+    bool isGltf = false;
+    int texOffset = 0;
+
+    struct TexCoordSets {
+        uint8_t baseColor = 0;
+        uint8_t metallicRoughness = 0;
+        uint8_t specularGlossiness = 0;
+        uint8_t normal = 0;
+        uint8_t occlusion = 0;
+        uint8_t emissive = 0;
+    } texCoordSets;
+
+	glm::vec3 baseColorFactor = glm::vec3(1.0f);
+	int baseColorTexId = -1;
+};
+//struct GltfMaterial {
+//    glm::vec4 baseColorFactor = glm::vec4(1.0f);
+//    glm::vec4 emissiveFactor = glm::vec4(0.0f);
+//    int baseColorTexId = -1;
+//    int normalTexId = -1;
+//    int metallicRoughnessTexId = -1;
+//    int emissiveTexId = -1;
+//};
 
 struct GltfPrimitive {
     uint32_t firstIndex = 0;
@@ -34,7 +112,7 @@ struct GltfPrimitive {
 
     uint32_t firstTriangle = 0;
     uint32_t triangleCount = 0;
-    //BoundingBox bb;
+    BoundingBox bb;
     //void setBoundingBox(glm::vec3 min, glm::vec3 max);
 };
 
@@ -128,21 +206,6 @@ enum MaterialType {
   MATERIAL_EMITTING = 2,
 };
 
-struct Materialz
-{
-  int type;
-    glm::vec3 color;
-    struct
-    {
-        float exponent;
-        glm::vec3 color;
-    } specular;
-    float hasReflective;
-    float hasRefractive;
-    float indexOfRefraction;
-    float emittance;
-};
-
 struct Cameraz
 {
     glm::ivec2 resolution;
@@ -180,4 +243,5 @@ struct ShadeableIntersection
   float t;
   glm::vec3 surfaceNormal;
   int materialId;
+  glm::vec2 uv;
 };

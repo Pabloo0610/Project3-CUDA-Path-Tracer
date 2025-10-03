@@ -21,6 +21,7 @@
 #define ERRORCHECK 1
 #define SORT_MATERIAL 0
 #define STREAM_COMPACT 1
+#define BBOX_CULLING 0
 
 #define FILENAME (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 #define checkCUDAError(msg) checkCUDAErrorFn(msg, FILENAME, __LINE__)
@@ -109,12 +110,51 @@ static GltfPrimitive* dev_primitives = NULL;
 static GltfTriangle* dev_triangles = NULL;
 static Vertex* dev_vertices = NULL;
 static uint32_t* dev_indices = NULL;
+
+static cudaTextureObject_t* dev_texObjs = NULL;
+static std::vector<cudaArray_t> dev_texArrays;
+static std::vector<cudaTextureObject_t> texObjs;
 // TODO: static variables for device memory, any extra info you need, etc
 // ...
 
 void InitDataContainer(GuiDataContainer* imGuiData)
 {
     guiData = imGuiData;
+}
+
+void uploadCudaTexture(GltfTexture& tex, int idx) {
+	cudaTextureObject_t texObj;
+    cudaChannelFormatDesc channelDesc;
+	assert(tex.components == 4); // for now we assume the texture is RGBA
+	channelDesc = cudaCreateChannelDesc<uchar4>();
+	cudaMallocArray(&dev_texArrays[idx], &channelDesc, tex.width, tex.height);
+
+    cudaMemcpy2DToArray(
+        dev_texArrays[idx],
+        0, 0,
+        tex.imageData,
+        tex.width * tex.components * sizeof(unsigned char), // pitch
+        tex.width * tex.components * sizeof(unsigned char), // width in bytes
+        tex.height,
+        cudaMemcpyHostToDevice
+    );
+
+    cudaResourceDesc resDesc = {};
+    resDesc.resType = cudaResourceTypeArray;
+    resDesc.res.array.array = dev_texArrays[idx];
+
+    cudaTextureDesc texDesc = {};
+    texDesc.addressMode[0] = cudaAddressModeWrap;
+    texDesc.addressMode[1] = cudaAddressModeWrap;
+    texDesc.filterMode = cudaFilterModeLinear;
+    texDesc.readMode = cudaReadModeNormalizedFloat;
+    texDesc.normalizedCoords = 1;
+
+    cudaCreateTextureObject(&texObj, &resDesc, &texDesc, nullptr);
+    cudaMemcpy(dev_texObjs + idx, &texObj, sizeof(cudaTextureObject_t), cudaMemcpyHostToDevice);
+    checkCUDAError("texture upload failed");
+
+    texObjs.push_back(texObj);
 }
 
 void pathtraceInit(Scenez* scene)
@@ -153,6 +193,13 @@ void pathtraceInit(Scenez* scene)
 
 	cudaMalloc(&dev_indices, scene->indices.size() * sizeof(uint32_t));
 	cudaMemcpy(dev_indices, scene->indices.data(), scene->indices.size() * sizeof(uint32_t), cudaMemcpyHostToDevice);
+
+    texObjs.clear(); 
+    dev_texArrays.clear();
+    cudaMalloc(&dev_texObjs, scene->textures.size() * sizeof(cudaTextureObject_t));
+    dev_texArrays.resize(scene->textures.size());
+    for (int i = 0; i < scene->textures.size(); i++)
+        uploadCudaTexture(scene->textures[i], i);
 
     checkCUDAError("pathtraceInit");
 }
@@ -237,13 +284,17 @@ __global__ void computeIntersections(
 
         float t;
         glm::vec3 intersect_point;
+		glm::vec2 uv;
         glm::vec3 normal;
+        int matId = 3;
         float t_min = FLT_MAX;
         int hit_geom_index = -1;
         bool outside = true;
 
         glm::vec3 tmp_intersect;
+		glm::vec2 tmp_uv;
         glm::vec3 tmp_normal;
+        int tmp_matId = 3;
 
         // naive parse through global geoms
 
@@ -261,7 +312,12 @@ __global__ void computeIntersections(
 			}
             else if (geom.type == MESH) {
                 //t = meshIntersectionTestV0(geom, meshes[geom.meshid], primitives, vertices, indices, pathSegment.ray, tmp_intersect, tmp_normal, outside);
-				t = meshIntersectionTestV1(geom, meshes[geom.meshid], primitives, triangles, pathSegment.ray, tmp_intersect, tmp_normal, outside);
+                if (BBOX_CULLING) {
+                    t = meshIntersectionTestV2(geom, meshes[geom.meshid], primitives, triangles, pathSegment.ray, tmp_intersect, tmp_normal, outside, tmp_uv);
+                }
+                else {
+                    t = meshIntersectionTestV1(geom, meshes[geom.meshid], primitives, triangles, pathSegment.ray, tmp_intersect, tmp_normal, outside, tmp_uv, tmp_matId);
+                }
             }
             // TODO: add more intersection tests here... triangle? metaball? CSG?
 
@@ -273,6 +329,8 @@ __global__ void computeIntersections(
                 hit_geom_index = i;
                 intersect_point = tmp_intersect;
                 normal = tmp_normal;
+				uv = tmp_uv;
+				matId = tmp_matId;
             }
         }
 
@@ -280,90 +338,23 @@ __global__ void computeIntersections(
         {
             intersections[path_index].t = -1.0f;
             intersections[path_index].materialId = -1;
+			intersections[path_index].uv = glm::vec2(0.0f);
         }
         else
         {
             // The ray hits something
             intersections[path_index].t = t_min;
-            intersections[path_index].materialId = geoms[hit_geom_index].materialid;
+            if (geoms[hit_geom_index].type != MESH) {
+                intersections[path_index].materialId = geoms[hit_geom_index].materialid;
+            }
+            else {
+				intersections[path_index].materialId = matId;
+            }
             intersections[path_index].surfaceNormal = normal;
+			intersections[path_index].uv = uv;
         }
     }
 }
-
-//__global__ void computeGltfIntersections(
-//    int depth,
-//    int num_paths,
-//    PathSegment* pathSegments,
-//    Geom* geoms,
-//    int geoms_size,
-//	int numPrimitives,
-//	GltfPrimitive* primitives,
-//    Vertex* vertices,
-//    uint32_t* indices,
-//    ShadeableIntersection* intersections)
-//{
-//    int path_index = blockIdx.x * blockDim.x + threadIdx.x;
-//    if (path_index >= num_paths) return;
-//
-//    const Ray ray = pathSegments[path_index].ray;
-//
-//    float t_best = FLT_MAX;
-//    int   bestPrim = -1;
-//    uint32_t best_i0 = 0, best_i1 = 0, best_i2 = 0;
-//    glm::vec3 bestN(0.0f), bestBary(0.0f);
-//
-//    for (int p = 0; p < numPrimitives; ++p) {
-//        const GltfPrimitive& prim = primitives[p];
-//        if (!prim.hasIndices || prim.indexCount < 3) continue;
-//
-//        uint32_t start = prim.firstIndex;
-//        uint32_t end = start + prim.indexCount;
-//
-//        for (uint32_t k = start; k + 2 < end; k += 3) {
-//            uint32_t i0 = indices[k + 0];
-//            uint32_t i1 = indices[k + 1];
-//            uint32_t i2 = indices[k + 2];
-//
-//            const glm::vec3& v0 = vertices[i0].pos;
-//            const glm::vec3& v1 = vertices[i1].pos;
-//            const glm::vec3& v2 = vertices[i2].pos;
-//
-//            glm::vec3 n0 = vertices[i0].normal;
-//            glm::vec3 n1 = vertices[i1].normal;
-//            glm::vec3 n2 = vertices[i2].normal;
-//
-//            if (len2(n0) == 0.f && len2(n1) == 0.f && len2(n2) == 0.f) {
-//                glm::vec3 faceN = glm::normalize(glm::cross(v1 - v0, v2 - v0));
-//                n0 = n1 = n2 = faceN;
-//            }
-//
-//            glm::vec3 isectP, N, bary;
-//            float t = triangleIntersectionTest(v0, v1, v2, n0, n1, n2, ray, isectP, N, bary);
-//
-//            if (t > 0.0f && t < t_best) {
-//
-//                if (glm::dot(N, ray.direction) > 0.f) N = -N;
-//
-//                t_best = t;
-//                bestPrim = p;
-//                best_i0 = i0; best_i1 = i1; best_i2 = i2;
-//                bestN = N;
-//                bestBary = bary;
-//            }
-//        }
-//    }
-//
-//    if (bestPrim < 0) {
-//        intersections[path_index].t = -1.0f;
-//        intersections[path_index].materialId = -1;
-//    }
-//    else {
-//        intersections[path_index].t = t_best;
-//        intersections[path_index].surfaceNormal = bestN;
-//        intersections[path_index].materialId = primitives[bestPrim].materialId;
-//    }
-//}
 
 // LOOK: "fake" shader demonstrating what you might do with the info in
 // a ShadeableIntersection, as well as how to use thrust's random number
@@ -426,6 +417,7 @@ __global__ void shadeBaseMaterial(
   int num_paths,
   ShadeableIntersection* shadeableIntersections,
   PathSegment* pathSegments,
+  cudaTextureObject_t* texObjs,
   Materialz* materials)
 {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -451,7 +443,7 @@ __global__ void shadeBaseMaterial(
       }
       else {
         glm::vec3 intersect = getPointOnRay(pathSegments[idx].ray, intersection.t);
-        scatterRay(pathSegments[idx], intersect, intersection.surfaceNormal, material, rng);
+        scatterRay(pathSegments[idx], intersect, intersection.uv, intersection.surfaceNormal, texObjs, material, rng);
         // pathSegments[idx].color *= u01(rng);
       }
       // If there was no intersection, color the ray black.
@@ -589,6 +581,7 @@ void pathtrace(uchar4* pbo, int frame, int iter)
             num_paths,
             dev_intersections,
             dev_paths,
+			dev_texObjs,
             dev_materials
         );
         //if (depth >= traceDepth) iterationComplete = true;
