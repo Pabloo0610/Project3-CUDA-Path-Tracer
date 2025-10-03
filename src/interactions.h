@@ -15,6 +15,7 @@ __host__ __device__ glm::vec3 calculateRandomDirectionInHemisphere(
     glm::vec3 normal, 
     thrust::default_random_engine& rng);
 
+__device__ glm::vec3 checkerTexture(glm::vec2 uv, float scale = 10.0f);
 /**
  * Scatter a ray with some probabilities according to the material properties.
  * For example, a diffuse surface scatters in a cosine-weighted hemisphere.
@@ -47,4 +48,5 @@ __device__ void scatterRay(
     glm::vec3 normal,
     cudaTextureObject_t* texObjs,
     const Materialz& m,
-    thrust::default_random_engine& rng);
+    thrust::default_random_engine& rng,
+    const int& proceduralType);

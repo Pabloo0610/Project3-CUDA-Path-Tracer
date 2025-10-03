@@ -21,7 +21,8 @@
 #define ERRORCHECK 1
 #define SORT_MATERIAL 0
 #define STREAM_COMPACT 1
-#define BBOX_CULLING 0
+#define BBOX_CULLING 1
+#define PROCEDURAL_TYPE 1 // 0: none, 1: checker, 2: noise
 
 #define FILENAME (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 #define checkCUDAError(msg) checkCUDAErrorFn(msg, FILENAME, __LINE__)
@@ -218,6 +219,11 @@ void pathtraceFree()
 	cudaFree(dev_vertices);
 	cudaFree(dev_indices);
 
+    for (int i = 0; i < texObjs.size(); i++) {
+        cudaDestroyTextureObject(texObjs[i]);
+        cudaFreeArray(dev_texArrays[i]);
+    }
+	cudaFree(dev_texObjs);
     checkCUDAError("pathtraceFree");
 }
 
@@ -290,6 +296,7 @@ __global__ void computeIntersections(
         float t_min = FLT_MAX;
         int hit_geom_index = -1;
         bool outside = true;
+		bool bbox_culling = false;
 
         glm::vec3 tmp_intersect;
 		glm::vec2 tmp_uv;
@@ -312,12 +319,8 @@ __global__ void computeIntersections(
 			}
             else if (geom.type == MESH) {
                 //t = meshIntersectionTestV0(geom, meshes[geom.meshid], primitives, vertices, indices, pathSegment.ray, tmp_intersect, tmp_normal, outside);
-                if (BBOX_CULLING) {
-                    t = meshIntersectionTestV2(geom, meshes[geom.meshid], primitives, triangles, pathSegment.ray, tmp_intersect, tmp_normal, outside, tmp_uv);
-                }
-                else {
-                    t = meshIntersectionTestV1(geom, meshes[geom.meshid], primitives, triangles, pathSegment.ray, tmp_intersect, tmp_normal, outside, tmp_uv, tmp_matId);
-                }
+				if (BBOX_CULLING) bbox_culling = true;
+                t = meshIntersectionTestV1(geom, meshes[geom.meshid], primitives, triangles, pathSegment.ray, tmp_intersect, tmp_normal, outside, tmp_uv, tmp_matId, bbox_culling);
             }
             // TODO: add more intersection tests here... triangle? metaball? CSG?
 
@@ -443,7 +446,8 @@ __global__ void shadeBaseMaterial(
       }
       else {
         glm::vec3 intersect = getPointOnRay(pathSegments[idx].ray, intersection.t);
-        scatterRay(pathSegments[idx], intersect, intersection.uv, intersection.surfaceNormal, texObjs, material, rng);
+		int proceduralType = PROCEDURAL_TYPE; // 0: none, 1: checker, 2: noise
+        scatterRay(pathSegments[idx], intersect, intersection.uv, intersection.surfaceNormal, texObjs, material, rng, proceduralType);
         // pathSegments[idx].color *= u01(rng);
       }
       // If there was no intersection, color the ray black.

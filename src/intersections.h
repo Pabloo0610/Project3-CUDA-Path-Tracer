@@ -5,6 +5,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtx/intersect.hpp>
 
+#include <thrust/swap.h>
+
 
 /**
  * Handy-dandy hash function that provides seeds for random number generation.
@@ -113,18 +115,8 @@ __host__ __device__ float meshIntersectionTestV1(
     glm::vec3& normal,
     bool& outside,
     glm::vec2& uv,
-    int& matId);
-
-__host__ __device__ float meshIntersectionTestV2(
-    Geom geom,
-    GltfMesh mesh,
-    GltfPrimitive* primitives,
-    GltfTriangle* triangles,
-    Ray r,
-    glm::vec3& intersectionPoint,
-    glm::vec3& normal,
-    bool& outside,
-    glm::vec2& uv);
+    int& matId,
+    const bool& isCulling);
 
 __host__ __device__ bool intersectAABB(
     const Ray& ray,

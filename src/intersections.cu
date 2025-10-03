@@ -240,7 +240,8 @@ __host__ __device__ float meshIntersectionTestV1(
     glm::vec3& normal,
     bool& outside,
     glm::vec2& uv,
-    int& matId)
+    int& matId,
+    const bool& isCulling)
 {
 
     Ray q;
@@ -254,7 +255,12 @@ __host__ __device__ float meshIntersectionTestV1(
     for (int p = 0; p < mesh.primCount; ++p) {
         const GltfPrimitive& prim = primitives[p + mesh.primIndexStart];
         if (prim.triangleCount == 0) continue;
-
+        if (isCulling && prim.bb.valid) {
+            float tNear, tFar;
+            if (!intersectAABB(q, prim.bb.min, prim.bb.max, tNear, tFar)) {
+                continue;
+            }
+        }
         for (uint32_t k = 0; k < prim.triangleCount; ++k) {
             const GltfTriangle& tri = triangles[prim.firstTriangle + k];
 
@@ -272,71 +278,6 @@ __host__ __device__ float meshIntersectionTestV1(
                 found = true;
                 uv = bary.x * tri.uv0 + bary.y * tri.uv1 + bary.z * tri.uv2;
 				matId = prim.materialId;
-            }
-        }
-    }
-
-    if (!found) {
-        return -1.0f;
-    }
-
-    intersectionPoint = multiplyMV(geom.transform, glm::vec4(bestP, 1.f));
-    normal = glm::normalize(multiplyMV(geom.invTranspose, glm::vec4(bestN, 0.f)));
-
-    outside = true;
-    if (glm::dot(normal, r.direction) > 0.0f) {
-        normal = -normal;
-        outside = false;
-    }
-
-    return glm::length(intersectionPoint - r.origin);
-}
-
-__host__ __device__ float meshIntersectionTestV2(
-    Geom geom,
-    GltfMesh mesh,
-    GltfPrimitive* primitives,
-    GltfTriangle* triangles,
-    Ray r,
-    glm::vec3& intersectionPoint,
-    glm::vec3& normal,
-    bool& outside,
-    glm::vec2& uv)
-{
-
-    Ray q;
-    q.origin = multiplyMV(geom.inverseTransform, glm::vec4(r.origin, 1.0f));
-    q.direction = glm::normalize(multiplyMV(geom.inverseTransform, glm::vec4(r.direction, 0.0f)));
-
-    float t_best = 1e30f;
-    glm::vec3 bestP, bestN;
-    bool found = false;
-
-    for (int p = 0; p < mesh.primCount; ++p) {
-        const GltfPrimitive& prim = primitives[p + mesh.primIndexStart];
-        if (prim.triangleCount == 0) continue;
-        if (prim.bb.valid) {
-            float tNear, tFar;
-            if (!intersectAABB(q, prim.bb.min, prim.bb.max, tNear, tFar)) {
-                continue;
-            }
-		}
-
-        for (uint32_t k = 0; k < prim.triangleCount; ++k) {
-            const GltfTriangle& tri = triangles[prim.firstTriangle + k];
-
-            glm::vec3 isectP, N, bary;
-            float t = triangleIntersectionTest(
-                tri.v0, tri.v1, tri.v2,
-                tri.n0, tri.n1, tri.n2,
-                q, isectP, N, bary
-            );
-
-            if (t > 0.0f && t < t_best) {
-                t_best = t;
-                bestP = isectP;
-                bestN = N;
-                found = true;
             }
         }
     }
@@ -375,7 +316,7 @@ __host__ __device__ bool intersectAABB(
         else {
             float t1 = (min[i] - ray.origin[i]) / ray.direction[i];
             float t2 = (max[i] - ray.origin[i]) / ray.direction[i];
-            if (t1 > t2) std::swap(t1, t2);
+            if (t1 > t2) thrust::swap(t1, t2);
 
             tNear = fmax(tNear, t1);
             tFar = fmin(tFar, t2);

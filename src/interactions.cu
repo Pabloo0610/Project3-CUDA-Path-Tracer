@@ -44,6 +44,18 @@ __host__ __device__ glm::vec3 calculateRandomDirectionInHemisphere(
         + sin(around) * over * perpendicularDirection2;
 }
 
+__device__ glm::vec3 checkerTexture(glm::vec2 uv, float scale) {
+    int x = static_cast<int>(floorf(uv.x * scale));
+    int y = static_cast<int>(floorf(uv.y * scale));
+
+    if ((x + y) % 2 == 0) {
+        return glm::vec3(1.0f, 1.0f, 1.0f);
+    }
+    else {
+        return glm::vec3(0.0f, 0.0f, 0.0f);
+    }
+}
+
 __device__ void scatterRay(
     PathSegment & pathSegment,
     glm::vec3 intersect,
@@ -51,7 +63,8 @@ __device__ void scatterRay(
     glm::vec3 normal,
     cudaTextureObject_t* texObjs,
     const Materialz &m,
-    thrust::default_random_engine &rng)
+    thrust::default_random_engine &rng,
+    const int& proceduralType)
 {
     // TODO: implement this.
     // A basic implementation of pure-diffuse shading will just call the
@@ -61,8 +74,14 @@ __device__ void scatterRay(
 	int texId = m.texOffset + m.baseColorTexId;
     glm::vec3 texColor;
     if (texId >= 0) {
-        float4 texSample = tex2D<float4>(texObjs[texId], uv.x, uv.y);
-        texColor = glm::vec3(texSample.x, texSample.y, texSample.z);
+        if (proceduralType == 1) {
+            texColor = checkerTexture(uv);
+        }
+        else
+        {
+            float4 texSample = tex2D<float4>(texObjs[texId], uv.x, uv.y);
+            texColor = glm::vec3(texSample.x, texSample.y, texSample.z);
+		}
 	}
     glm::vec3 mColor;
     if (m.isGltf) {
